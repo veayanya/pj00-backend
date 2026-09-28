@@ -1023,6 +1023,7 @@ Instruksi Ekstraksi & Penalaran Tambahan:
  - Total nilai_dikurangi harus sama atau setara dengan total nilai_ditambah.
 5. Ekstraksi Anggaran per Tahun (anggaran_tahunan): Ekstrak setiap baris { "tahun": <angka tahun>, "jumlah": <angka rupiah tanpa titik> } dan tentukan "tahun_rencana". Nilai "pagu" HARUS SAMA dengan "jumlah" pada tahun_rencana.
 6. Ekstraksi Indikator & Tolok Ukur Kinerja (indikator_kinerja): Ekstrak baris Tujuan (Ultimate), Sasaran (Intermediate), Program (Immediate), Kegiatan (Immediate), Sub Kegiatan (Output), Kelompok Sasaran. { "level": "...", "tolok_ukur": "...", "target": "..." }.
+   RINCIAN OUTPUT (WAJIB untuk baris "Sub Kegiatan (Output)"): tambahkan properti "rincian": [ { "nama": "...", "isi": "..." } ] yang menjabarkan SESEDETAIL MUNGKIN isi dari target output tersebut. Contoh: bila target "2 Laporan", buat 2 item — tiap item memuat nama laporan/dokumen (mis. jenis rapat/konsultasi, periode, pihak terkait) dan "isi" berupa komponen/uraian yang membentuknya. Ambil HANYA dari teks dokumen (uraian Sub Kegiatan, keterangan/spesifikasi pada rincian belanja, nama rekening & komponen belanja yang terkait). Jumlah item sebaiknya sama dengan angka target bila dokumen memungkinkan. DILARANG mengarang nama, tanggal, atau angka yang tidak ada di dokumen; bila dokumen tidak merinci, isi "isi" dengan "Tidak dirinci pada dokumen". Baris level lain tidak perlu "rincian".
 7. Analisis Kesesuaian Anggaran Tahun Berjalan vs Target Kinerja (analisis_kesesuaian_anggaran): Objek { "status": "Sesuai" | "Perlu Perhatian" | "Tidak Sesuai", "penjelasan": "...", "estimasi_biaya_per_output": "...", "proyeksi_pencapaian_target": "Target Kemungkinan Tercapai" | "Berisiko Tidak Tercapai" | "Diproyeksikan Tidak Tercapai", "alasan_proyeksi_target": "..." }.
 8. Ekstraksi tambahan: "lokasi" dan "sumber_dana".
 9. Evaluasi 6 Aspek Efisiensi & Efektivitas RKA (evaluasi_rka): efisiensi_alokasi, distribusi_rpd, kepatuhan_ssh_sbm, efisiensi_realisasi_kinerja, efektivitas_aktual, potensi_inefektivitas.
@@ -1087,7 +1088,7 @@ PENTING: Output Anda HARUS murni berupa valid JSON SAJA tanpa markdown \`\`\`jso
  { "level": "Sasaran (Intermediate)", "tolok_ukur": "Persentase Capaian Sasaran", "target": "96 Persen" },
  { "level": "Program (Immediate)", "tolok_ukur": "Persentase Ketercapaian Program", "target": "96 Persen" },
  { "level": "Kegiatan (Immediate)", "tolok_ukur": "Jumlah Laporan Kegiatan", "target": "2 Jenis" },
- { "level": "Sub Kegiatan (Output)", "tolok_ukur": "Jumlah Dokumen Output", "target": "12 Dokumen" },
+ { "level": "Sub Kegiatan (Output)", "tolok_ukur": "Jumlah Dokumen Output", "target": "2 Laporan", "rincian": [ { "nama": "Laporan 1 — <nama laporan dari dokumen>", "isi": "<komponen/uraian dari dokumen>" }, { "nama": "Laporan 2 — <nama laporan dari dokumen>", "isi": "<komponen/uraian dari dokumen>" } ] },
  { "level": "Kelompok Sasaran", "tolok_ukur": "-", "target": "Kelompok sasaran program" }
  ],
  "analisis_kesesuaian_anggaran": {

@@ -383,7 +383,11 @@ const FIELD_SANITIZERS = {
       .map(r => ({
         level: toStr(r.level, 120),
         tolok_ukur: toStr(r.tolok_ukur ?? r.tolokUkur, 400),
-        target: toStr(r.target, 200)
+        target: toStr(r.target, 200),
+        rincian: (Array.isArray(r.rincian) ? r.rincian : [])
+          .slice(0, 20)
+          .map(x => (typeof x === 'string' ? { nama: toStr(x, 300), isi: '' } : { nama: toStr(x?.nama, 300), isi: toStr(x?.isi, 1000) }))
+          .filter(x => x.nama || x.isi)
       }))
       .filter(r => r.level || r.tolok_ukur || r.target);
   },
