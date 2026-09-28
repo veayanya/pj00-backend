@@ -103,7 +103,12 @@ function makeError(message, status) {
  * @param {string} systemInstruction
  * @param {boolean} [json]   - true = paksa keluaran JSON (responseMimeType application/json)
  */
-async function generate({ contents, temperature, systemInstruction, json = false }) {
+async function generate({
+  contents, temperature, systemInstruction, json = false,
+  perModelTimeoutMs = REQUEST_TIMEOUT_MS, // batas tunggu per model
+  totalBudgetMs = Infinity                // batas total seluruh percobaan (semua key & model)
+}) {
+  const startedAt = Date.now();
   const keys = buildKeyPool();
   if (keys.length === 0) {
     throw makeError('GEMINI_API_KEY belum dikonfigurasi di server. Hubungi Administrator.', 503);
@@ -113,10 +118,16 @@ async function generate({ contents, temperature, systemInstruction, json = false
   let lastErr = null;
   const failures = []; // rincian kegagalan tiap model, untuk log server
 
+  outer:
   for (let k = 0; k < keys.length; k++) {
     const genAI = new GoogleGenerativeAI(keys[k]);
 
     for (const modelName of models) {
+      const remaining = totalBudgetMs - (Date.now() - startedAt);
+      if (remaining < 5_000) {
+        failures.push('anggaran waktu total habis');
+        break outer; // hentikan agar server tidak terus jalan setelah klien menyerah
+      }
       try {
         const model = genAI.getGenerativeModel({
           model: modelName,
@@ -127,7 +138,7 @@ async function generate({ contents, temperature, systemInstruction, json = false
         });
         const result = await withTimeout(
           model.generateContent({ contents }),
-          REQUEST_TIMEOUT_MS,
+          Math.min(perModelTimeoutMs, remaining),
           modelName
         );
         const text = result.response.text();
@@ -154,7 +165,13 @@ async function generate({ contents, temperature, systemInstruction, json = false
   if (isInvalidKeyError(lastErr)) {
     throw makeError('GEMINI_API_KEY tidak valid. Perbarui key di panel Admin.', 503);
   }
-  throw makeError(`Semua model Gemini gagal diproses: ${lastErr?.message || 'kesalahan tidak diketahui'}`, 502);
+  if (/^Timeout /.test(lastErr?.message || '') || failures.includes('anggaran waktu total habis')) {
+    throw makeError(
+      'Layanan AI terlalu lama merespons (batas waktu habis di semua model). Coba lagi, atau persingkat instruksi / kurangi bagian yang boleh diubah.',
+      504
+    );
+  }
+  throw makeError(`Semua model Gemini gagal diproses. Rincian: ${failures[0] || lastErr?.message || 'kesalahan tidak diketahui'}`, 502);
 }
 
 function clipDocument(text) {
@@ -528,7 +545,9 @@ FORMAT KELUARAN — HANYA JSON ini, tanpa teks lain:
     systemInstruction:
       BAPPERIDA_SYSTEM_INSTRUCTION +
       '\nUntuk tugas ini Anda WAJIB menjawab dengan satu objek JSON valid saja, tanpa Markdown.',
-    json: true
+    json: true,
+    perModelTimeoutMs: 40_000, // model lambat cepat diganti ke cadangan
+    totalBudgetMs: 105_000     // < timeout frontend 120 dtk, agar error backend tampil jelas
   });
 
   const parsed = parseJsonLoose(text);
