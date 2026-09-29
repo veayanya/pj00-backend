@@ -60,6 +60,46 @@ async function writeDb(data) {
  realtimeHub.publishDbState(data);
 }
 
+
+// ── ID dokumen RKA harus unik ──
+// ID lama dibuat frontend dari jumlah dokumen ('RKA-2026-00' + (jumlah + 1)), sehingga setelah ada
+// dokumen yang dihapus, ID bisa terpakai ulang dan beberapa dokumen berbagi ID yang sama. Akibatnya
+// memilih/menghapus 1 dokumen ikut menyeret dokumen ber-ID sama (pilih 5 → terhapus 10).
+// makeUniqueRkaId: beri ID yang belum dipakai. repairDuplicateRkaIds: perbaiki data lama yang sudah kembar.
+function makeUniqueRkaId(db, desired) {
+  const taken = new Set(db.rkis.map(r => String(r.id)));
+  const want = desired ? String(desired) : '';
+  if (want && !taken.has(want)) return want;
+  const m = want.match(/^(RKA-\d{4}-)\d+$/);
+  const prefix = m ? m[1] : 'RKA-2026-';
+  let max = 0;
+  for (const id of taken) {
+    const mm = id.match(/^(RKA-\d{4}-)(\d+)$/);
+    if (mm && mm[1] === prefix) max = Math.max(max, parseInt(mm[2], 10));
+  }
+  let n = max + 1;
+  let id = prefix + String(n).padStart(3, '0');
+  while (taken.has(id)) { n++; id = prefix + String(n).padStart(3, '0'); }
+  return id;
+}
+
+// db.rkis diurutkan terbaru di atas, jadi telusuri dari yang terlama: dokumen terlama mempertahankan
+// ID aslinya (riwayat/versinya tetap menempel), dokumen yang lebih baru diberi ID baru. Mengembalikan true bila ada perubahan.
+function repairDuplicateRkaIds(db) {
+  const seen = new Set();
+  let changed = false;
+  for (let i = db.rkis.length - 1; i >= 0; i--) {
+    const r = db.rkis[i];
+    const id = String(r.id);
+    if (!seen.has(id)) { seen.add(id); continue; }
+    const newId = makeUniqueRkaId({ rkis: db.rkis }, id);
+    db.rkis[i] = { ...r, id: newId };
+    seen.add(newId);
+    changed = true;
+  }
+  return changed;
+}
+
 const IS_VERCEL_EARLY = !!process.env.VERCEL;
 const app = express();
 const port = process.env.PORT || 3000;
@@ -1208,6 +1248,10 @@ app.post('/api/v1/evaluate', requireAuth, async (req, res) => {
 app.get('/api/v1/rkis', requireAuth, async (req, res) => {
  try {
  const db = await readDb();
+ // Perbaiki ID kembar warisan data lama (sekali jalan, disimpan permanen).
+ if (repairDuplicateRkaIds(db) && !isServingFallbackData()) {
+ try { await writeDb(db); } catch (e) { console.warn('[DB] Gagal menyimpan perbaikan ID kembar:', e.message); }
+ }
  // Admin dan Moderator melihat semua data; User hanya melihat data miliknya sendiri
  let rkis = db.rkis;
  if (req.user.role === 'user') {
@@ -1254,6 +1298,8 @@ app.post('/api/v1/rkis', requireAuth, async (req, res) => {
  for (const f of RKA_RAW_FIELDS) delete newRka[f];
  delete newRka.hasSourceText;
  if (incomingText) newRka.sourceText = cleanRkaText(incomingText).slice(0, RKA_SOURCE_TEXT_MAX);
+ // ID dari klien bisa bentrok dengan dokumen yang sudah ada — pastikan selalu unik.
+ newRka.id = makeUniqueRkaId(db, newRka.id);
  db.rkis.unshift(newRka);
  await writeDb(db);
 
