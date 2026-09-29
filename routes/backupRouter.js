@@ -21,10 +21,10 @@ function sortRkisNewestFirst(list) {
 const router = express.Router();
 
 /**
- * 1. Full Database Export (Admin & Moderator)
+ * 1. Full Database Export (HANYA Admin)
  * Mengunduh seluruh data (RKA, SSH, User, Konfigurasi API, dan Log) dalam 1 berkas JSON
  */
-router.get('/export-full', requireAuth, requireRole('admin', 'moderator'), async (req, res) => {
+router.get('/export-full', requireAuth, requireRole('admin'), async (req, res) => {
  try {
  const rawData = await getAllStoreData();
 
@@ -67,13 +67,14 @@ router.get('/export-full', requireAuth, requireRole('admin', 'moderator'), async
 });
 
 /**
- * 2. User Data Export (Semua User & Moderator)
+ * 2. User Data Export (HANYA Admin — user pengupload & moderator tidak
+ * diberi berkas JSON backup)
  * Mengunduh berkas RKA milik pengguna (atau seluruh RKA jika moderator/admin)
  * Payload memiliki wrapper `data` agar kompatibel dengan endpoint /restore
  * (sebelumnya wrapper ini tidak ada sehingga tombol "Upload Backup .html"
  * selalu gagal dengan error "Harus mengandung field data").
  */
-router.get('/export-user', requireAuth, async (req, res) => {
+router.get('/export-user', requireAuth, requireRole('admin'), async (req, res) => {
  try {
  const mainDb = await getStore('main_db') || { rkis: [] };
  let rkis = mainDb.rkis || [];
