@@ -219,7 +219,7 @@ async function deduplicateSshItems() {
 /**
  * Orchestrator — dipanggil tiap 60 detik
  */
-async function runStorageOptimizer() {
+export async function runStorageOptimizer() {
 const startTime = Date.now();
 
 try {

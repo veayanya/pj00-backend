@@ -26,10 +26,10 @@ import dbPoolRouter from './routes/dbPoolRouter.js';
 import settingsRouter from './routes/settingsRouter.js';
 import laporanRouter from './routes/laporanRouter.js';
 import aibotRouter from './routes/aibotRouter.js';
-import { getStore, setStore, getStoreUpdatedAt, checkDbConnection, initPool, startQuotaMonitor, getPoolStatus, isServingFallbackData, getFallbackBackupInfo } from './lib/db.js';
+import { getStore, setStore, getStoreUpdatedAt, checkDbConnection, initPool, startQuotaMonitor, checkQuotaAndRotate, getPoolStatus, isServingFallbackData, getFallbackBackupInfo } from './lib/db.js';
 import { logActivity, getActivityLogs, clearActivityLogs } from './utils/activityLogger.js';
 import { realtimeHub } from './utils/realtimeHub.js';
-import { startStorageOptimizer, getOptimizerStats } from './utils/storageOptimizer.js';
+import { startStorageOptimizer, runStorageOptimizer, getOptimizerStats } from './utils/storageOptimizer.js';
 
 // Data (rkis + ssh_databases) disimpan di Neon PostgreSQL, key 'main_db'
 // di tabel app_store — menggantikan file data/db.json yang dulu hilang
@@ -60,6 +60,7 @@ async function writeDb(data) {
  realtimeHub.publishDbState(data);
 }
 
+const IS_VERCEL_EARLY = !!process.env.VERCEL;
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -82,6 +83,37 @@ app.use(cors({
  credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
+
+// -- Vercel: pastikan bootstrap selesai sebelum request diproses ---------------
+if (IS_VERCEL_EARLY) {
+  app.use(async (req, res, next) => {
+    try {
+      await bootstrap();
+      next();
+    } catch (err) {
+      console.error('[Boot] Gagal:', err.message);
+      res.status(503).json({ error: 'Server belum siap: ' + err.message });
+    }
+  });
+}
+
+// -- Vercel Cron: pengganti timer latar belakang -------------------------------
+// Dijadwalkan lewat vercel.json. Vercel otomatis mengirim header
+// "Authorization: Bearer <CRON_SECRET>" bila env CRON_SECRET diisi.
+app.get('/api/cron/maintenance', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'Tidak diizinkan.' });
+  }
+  try {
+    await bootstrap();
+    const quota = await checkQuotaAndRotate().catch((e) => ({ error: e.message }));
+    await runStorageOptimizer().catch((e) => console.warn('[Cron] Optimizer:', e.message));
+    res.json({ success: true, quota });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 app.use(cookieParser());
 
 // Muat GEMINI_API_KEY / OPENAI_API_KEY yang pernah disimpan lewat panel Admin
@@ -1898,31 +1930,57 @@ if (fs.existsSync(frontendDistPath)) {
  });
 }
 
-loadPersistedApiConfig().finally(async () => {
- // Siapkan pool multi-database & tentukan slot aktif (berdasarkan generation
- // tertinggi) sebelum trafik masuk.
- try {
- const pool = await initPool();
- console.log(`[DBPool] Mode: ${pool.mode} | Slot aktif: ${pool.activeSlot ?? '-'}/${pool.totalSlots} | Ambang failover: ${pool.thresholdPercent}%`);
- } catch (err) {
- console.error('[DBPool] Inisialisasi gagal:', err.message);
- if (err.message.includes('CRITICAL_CONFIG_ERROR')) {
- console.error('[DBPool] Konfigurasi database kritis gagal. Menghentikan server.');
- process.exit(1);
- }
- }
+// -- Bootstrap --------------------------------------------------------------
+// Dijalankan sekali per proses/instance. Di Vercel dipanggil lazy pada request
+// pertama (lihat middleware di bawah); di server biasa dipanggil saat start.
+const IS_VERCEL = !!process.env.VERCEL;
+let bootstrapPromise = null;
 
- // Sinkronisasi Neon antar instance Render untuk realtime multi-device.
- await realtimeHub.startDatabaseSync(readDb, () => getStoreUpdatedAt('main_db'));
+function bootstrap() {
+  if (bootstrapPromise) return bootstrapPromise;
+  bootstrapPromise = (async () => {
+    await loadPersistedApiConfig().catch((err) => {
+      console.warn('[Boot] loadPersistedApiConfig gagal:', err.message);
+    });
 
- // Mulai optimasi storage otomatis tiap menit
- startStorageOptimizer();
+    // Siapkan pool multi-database & tentukan slot aktif (berdasarkan generation
+    // tertinggi) sebelum trafik masuk.
+    try {
+      const pool = await initPool();
+      console.log(`[DBPool] Mode: ${pool.mode} | Slot aktif: ${pool.activeSlot ?? '-'}/${pool.totalSlots}`);
+    } catch (err) {
+      console.error('[DBPool] Inisialisasi gagal:', err.message);
+      if (err.message.includes('CRITICAL_CONFIG_ERROR')) {
+        console.error('[DBPool] Konfigurasi database kritis gagal.');
+        if (!IS_VERCEL) process.exit(1);
+        throw err;
+      }
+    }
 
- // Mulai pemantauan kuota database + failover otomatis
- startQuotaMonitor();
+    // Sinkronisasi Neon antar instance untuk realtime multi-device.
+    // Polling hanya berjalan selama ada klien SSE tersambung.
+    await realtimeHub.startDatabaseSync(readDb, () => getStoreUpdatedAt('main_db'));
 
- app.listen(port, '0.0.0.0', () => {
- console.log(`AI Backend berjalan di port ${port}`);
- });
-});
+    // Timer latar belakang tidak andal di serverless -> diganti Vercel Cron
+    // (lihat /api/cron/maintenance). Di server biasa tetap berjalan seperti semula.
+    if (!IS_VERCEL) {
+      startStorageOptimizer();
+      startQuotaMonitor();
+    }
+  })().catch((err) => {
+    bootstrapPromise = null; // izinkan coba lagi pada request berikutnya
+    throw err;
+  });
+  return bootstrapPromise;
+}
 
+export { bootstrap };
+export default app;
+
+if (!IS_VERCEL) {
+  bootstrap().then(() => {
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`AI Backend berjalan di port ${port}`);
+    });
+  });
+}
